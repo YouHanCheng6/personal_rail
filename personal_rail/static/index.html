@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light"><meta name="description" content="六个方向，逐项比较。有来源的个人铁路行程规划。">
+  <title>沿线 · 个人铁路行程</title><link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <link rel="preload" as="image" href="/static/images/morning-train.webp">
+  <link rel="stylesheet" href="/static/style.css"><script src="/static/app.js" defer></script>
+</head>
+<body>
+<div class="hero-landscape" aria-hidden="true"><img src="/static/images/morning-train.webp" width="1672" height="941" alt="" fetchpriority="high"></div>
+<a class="skip" href="#main">跳到行程规划</a>
+<header class="site-header"><div class="header-inner">
+  <a class="brand" href="/" aria-label="沿线首页"><img src="/static/icon.svg" width="34" height="34" alt=""><span>沿线<span class="brand-sub">个人铁路行程</span></span></a>
+  <nav aria-label="页面导航"><a href="#evidence">资料与来源</a><a href="#history">采集记录</a><span class="local-label"><span class="status-dot"></span>个人版</span></nav>
+</div></header>
+<main id="main">
+  <section class="intro"><div><h1>比较你的下一程</h1><p>把时间、花费与换乘放在一起，选一趟更适合自己的车。</p></div><p class="coverage">龙川西 ↔ 北京<br>北京 ↔ 赣州<br>揭阳机场站 ↔ 龙川西</p></section>
+  <form id="search-form" class="search-panel">
+    <fieldset class="route-field"><legend>出行方向</legend><div class="route-options" id="route-options">
+      <label><input type="radio" name="route" value="longchuan-beijing" checked><span>龙川西 <span aria-hidden="true">→</span> 北京</span></label>
+      <label><input type="radio" name="route" value="beijing-longchuan"><span>北京 <span aria-hidden="true">→</span> 龙川西</span></label>
+      <label><input type="radio" name="route" value="beijing-ganzhou"><span>北京 <span aria-hidden="true">→</span> 赣州</span></label>
+      <label><input type="radio" name="route" value="ganzhou-beijing"><span>赣州 <span aria-hidden="true">→</span> 北京</span></label>
+      <label><input type="radio" name="route" value="jieyangjichang-longchuan"><span>揭阳机场站 <span aria-hidden="true">→</span> 龙川西</span></label>
+      <label><input type="radio" name="route" value="longchuan-jieyangjichang"><span>龙川西 <span aria-hidden="true">→</span> 揭阳机场站</span></label>
+    </div></fieldset>
+    <div class="query-controls">
+      <label>出发日期<input type="date" name="departure_date" id="departure-date" required></label>
+      <label>席别取向<select name="seat"><option value="balanced">均衡 · 长途优先卧铺</option><option value="economy">节省 · 二等座 / 硬座</option><option value="comfort">舒适 · 一等座 / 软卧</option></select></label>
+      <label>铁路预算上限 <span class="optional">可不填</span><span class="money-input"><span>¥</span><input type="number" name="budget" min="1" max="20000" step="0.5" placeholder="不限" aria-label="铁路预算上限，元"></span></label>
+      <button type="submit" id="search-button" class="primary">查找并比较 <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24"><path d="M4 12h15M13 5l7 7-7 7"/></svg></button>
+    </div>
+    <p id="date-hint" class="date-hint">按所选出发日期读取公开车次；不同日期的数据不会混入推荐。</p>
+    <details class="advanced"><summary>换乘条件与比较口径</summary><div class="advanced-content">
+      <label class="check"><input type="checkbox" name="same_station" checked>仅同站换乘</label>
+      <label>换乘至少 <select name="min_transfer"><option value="30">30分钟</option><option value="45" selected>45分钟</option><option value="60">60分钟</option><option value="90">90分钟</option><option value="120">120分钟</option></select></label>
+      <p>阈值是可调整的规划假设。异站至少预留120分钟，仍标较高风险。总时间按站到站计算；报价不含市内交通、餐饮、住宿与服务费。</p>
+    </div></details>
+  </form>
+  <div id="query-status" class="query-status" role="status" aria-live="polite"></div>
+  <div id="error" class="error" role="alert" hidden></div>
+  <div class="workspace">
+    <section class="results-section" aria-labelledby="results-title">
+      <div class="results-heading"><div><h2 id="results-title">候选行程</h2><span id="result-count" class="muted">等待查询</span></div><button class="text-button" id="export" disabled>导出结果</button></div>
+      <div class="sort-tabs" role="group" aria-label="比较优先级"><button type="button" data-sort="balanced" aria-pressed="true">综合考虑</button><button type="button" data-sort="fastest" aria-pressed="false">时间最短</button><button type="button" data-sort="cheapest" aria-pressed="false">票价最低</button><button type="button" data-sort="comfortable" aria-pressed="false">预计更舒适</button></div>
+      <p id="date-warning" class="notice" hidden></p>
+      <div id="comparison" hidden aria-live="polite"></div>
+      <div id="results" aria-live="polite"><div class="empty"><h3>先选一个方向</h3><p>Agent 会读取公开时刻与报价，再比较直达和一次换乘方案。</p></div></div>
+      <button id="show-more" class="secondary more" hidden>显示更多方案</button>
+      <p class="result-footnote" id="scope-note">参考票价对应行程中列出的席别，不代表该席别目前有票。</p>
+    </section>
+    <aside class="sidebar">
+      <section class="recommendation" aria-labelledby="recommendation-title"><div class="advice-heading"><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24"><path d="m12 3 2.6 6.4L21 12l-6.4 2.6L12 21l-2.6-6.4L3 12l6.4-2.6Z"/></svg><h2 id="recommendation-title">Agent 的取舍</h2></div><div id="advice"><p>有了可核验的候选，才有值得参考的推荐。</p></div><p class="model-label" id="model-label">读取模型配置中</p></section>
+      <section class="trust-note"><h3>哪些能确认，哪些不能</h3><dl><div><dt>时刻与票价</dt><dd>公开页面参考<br>购票前以12306为准</dd></div><div><dt>换乘风险</dt><dd>根据缓冲时间推测<br>未取得历史晚点率</dd></div><div><dt>预计舒适度</dt><dd>根据席别、时长推测<br>具体车型可能调整</dd></div><div><dt>真实上座率</dt><dd><strong>未知</strong> · 不从余票推算人数</dd></div></dl></section>
+      <a class="official-link" href="https://www.12306.cn/" target="_blank" rel="noopener noreferrer">去12306核对开行与票价 <span aria-hidden="true">↗</span></a>
+    </aside>
+  </div>
+  <section id="evidence" class="evidence-section"><div class="section-heading"><h2>每个判断，都有来处</h2><p>数据日期、读取时间与推测依据分别记录。</p></div><div class="evidence-grid"><div><h3>本次时刻与报价来源</h3><ul id="source-list" class="source-list"><li class="muted">查询后显示实际读取的路线页。</li></ul></div><div><h3>官方最新公告</h3><p id="news-status" class="news-status" role="status">正在读取官方公告…</p><ul id="news-list" class="source-list"></ul><div id="news-links" class="news-links"></div><details class="background-references"><summary>规则、车型与历史背景</summary><p class="news-status">背景资料，不代表最新消息或当日实际车型。</p><ul id="reference-list" class="source-list"></ul></details></div></div>
+    <details class="method"><summary>查看比较方法与局限</summary><p>综合排序 = 铁路全程小时数 + 参考票价÷100 + 换乘惩罚 +（100−舒适度）÷10。换乘惩罚：直达0、较低1、中等3、较高7。缺失票价暂按30项惩罚，不将缺失值记为0；预算筛选会排除未知票价。</p><p>舒适度为0–100规则估计：商务座92、一等卧90、软卧86、一等座82、二等卧78、硬卧72、二等座66、硬座42。非卧铺连续乘坐超过4小时后每30分钟扣1分，最多扣25；分段按乘坐时长加权，一次换乘扣8，凌晨或跨午夜换乘再扣12。它表达选择取舍，不是乘客调查或真实体验预测。</p><p>同站换乘不足30分钟为较高风险，30–44分钟为中等，45分钟及以上为较低；异站或凌晨换乘仍为较高。该规则未使用列车历史准点率，不保证接续。最多比较一次换乘、等待不超过8小时，公开页面覆盖不完整，结果不是全路网最优解。</p><p>只采用来源给出的具体日期，不假设同一列车每天开行。历史资料仅供背景阅读；本地观察记录从首次运行开始，不能冒充运营历史或晚点历史。</p></details>
+  </section>
+  <section id="history" class="history-section"><h2>小而清楚的采集记录</h2><p class="muted">每个公开路线页最多保留30次观察，用来回看资料变化，不建立乘客画像。</p><div id="history-content">完成一次查询后，记录将出现在这里。</div></section>
+</main>
+<footer><span>沿线 · 为自己的下一程做判断</span><span>独立运行 · 本地缓存 · 不连接铁路账号</span></footer>
+</body></html>
