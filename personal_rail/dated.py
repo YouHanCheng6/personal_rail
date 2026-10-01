@@ -79,14 +79,14 @@ def parse_dated_page(html: str, url: str, observed: str, wanted: date) -> dict:
         if not {"name", "price"} <= set(seat_fields):
             raise ValueError("来源席别字段不完整。")
         direct = []
-        for values in trains["data"][:150]:
+        for values in trains["data"]:
             raw = dict(zip(fields, values, strict=True))
             start, length = raw["seatStart"], raw["seatLen"]
             if (
                 type(start) is not int
                 or type(length) is not int
                 or not 0 <= start <= len(trains["seatData"])
-                or not 0 <= length <= 20
+                or length < 0
                 or start + length > len(trains["seatData"])
             ):
                 continue
@@ -108,9 +108,9 @@ def parse_dated_page(html: str, url: str, observed: str, wanted: date) -> dict:
             if leg and leg["departure"][:10] == day:
                 direct.append(leg)
         transfers = []
-        for item in data.get("transfers", [])[:30]:
+        for item in data.get("transfers", []):
             rows = item.get("legs", [])
-            if len(rows) != 2 or any(r.get("type") != "TRAIN" for r in rows):
+            if len(rows) < 2 or any(r.get("type") != "TRAIN" for r in rows):
                 continue
             legs = [
                 _dated_leg(
@@ -129,6 +129,7 @@ def parse_dated_page(html: str, url: str, observed: str, wanted: date) -> dict:
             if all(legs) and legs[0]["departure"][:10] == day:
                 transfers.append(legs)
         return {
+            "schema": 3,
             "source_url": url,
             "source_date": day,
             "observed_at": observed,

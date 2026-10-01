@@ -1,0 +1,2 @@
+# Optional renderer: reads normal public dynamic flight pages without account state.
+playwright==1.58.0

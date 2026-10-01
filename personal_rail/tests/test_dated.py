@@ -1,5 +1,5 @@
 import json
-from datetime import date
+from datetime import date, datetime
 
 import pytest
 
@@ -67,6 +67,7 @@ def test_dated_parser_never_shifts_wrong_day_train():
 
 def test_dated_cache_is_date_scoped_and_expires(tmp_path, monkeypatch):
     import asyncio
+
     from personal_rail.service import Collector
 
     c = Collector(tmp_path)
@@ -83,7 +84,6 @@ def test_dated_cache_is_date_scoped_and_expires(tmp_path, monkeypatch):
     monkeypatch.setattr(c, "policy", policy)
     monkeypatch.setattr(c, "get_text", get_text)
     # Use same-day valid legs; both dates are within the fixed clock's window.
-    from datetime import datetime
 
     class Clock(datetime):
         @classmethod
@@ -113,11 +113,12 @@ def test_dated_cache_is_date_scoped_and_expires(tmp_path, monkeypatch):
 
 def test_dated_policy_denial_and_failure_never_use_old_cache(tmp_path, monkeypatch):
     import asyncio
+
     import httpx
+
     from personal_rail.service import Collector
 
     c = Collector(tmp_path)
-    from datetime import datetime
 
     class Clock(datetime):
         @classmethod
@@ -155,7 +156,6 @@ def test_dated_policy_denial_and_failure_never_use_old_cache(tmp_path, monkeypat
 
 def test_dated_transfer_uses_leg_fares_and_actual_overnight_dates():
     from bs4 import BeautifulSoup
-    from personal_rail.planner import plan
 
     soup = BeautifulSoup(page(), "html.parser")
     data = json.loads(soup.find("script", id="pageData").string)
@@ -187,20 +187,8 @@ def test_dated_transfer_uses_leg_fares_and_actual_overnight_dates():
     ]
     soup.find("script", id="pageData").string = json.dumps(data)
     parsed = parse_dated_page(str(soup), URL, OBSERVED, date(2026, 10, 6))
-    rows = plan(
-        [parsed],
-        "beijing-ganzhou",
-        date(2026, 10, 6),
-        "balanced",
-        45,
-        True,
-        "balanced",
-        None,
-    )
-    assert rows[0]["rail_fare"] == 900
-    assert rows[0]["transfer_minutes"] == 60
-    assert rows[0]["overnight_transfer"] and rows[0]["risk"] == "较高"
-    assert rows[0]["legs"][1]["departure"] == "2026-10-07T00:30"
+    assert parsed["transfers"][0][0]["seats"][0]["price"] == 700
+    assert parsed["transfers"][0][1]["departure"].startswith("2026-10-07T00:30")
 
 
 def test_dated_canonical_route_must_match():
@@ -211,3 +199,15 @@ def test_dated_canonical_route_must_match():
             OBSERVED,
             date(2026, 10, 6),
         )
+
+
+def test_every_source_train_is_retained_beyond_old_150_limit():
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(page(), "html.parser")
+    data = json.loads(soup.find("script", id="pageData").string)
+    prototype = data["trains"]["data"][0]
+    data["trains"]["data"] = [[f"D{i}", *prototype[1:]] for i in range(1, 181)]
+    soup.find("script", id="pageData").string = json.dumps(data)
+    result = parse_dated_page(str(soup), URL, OBSERVED, date(2026, 10, 6))
+    assert len(result["direct"]) == 180

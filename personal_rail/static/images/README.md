@@ -1,3 +1,7 @@
-# Artwork
+# 晨雾列车背景
 
-morning-train.webp is AI-generated decorative artwork, not evidence of a real train service or vehicle type.
+`morning-train.webp`：2026-09-23 使用 OpenAI imagegen 生成、经用户确认的概念画面。1672×941，126426字节，WebP quality 88。
+
+画面方向：银白色流线型高铁沿弯曲高架桥穿越青绿色中国山峦与晨雾，列车集中右半部，暖色晨光，左侧和底部留浅象牙色雾气承托界面，无文字、标志或界面元素。
+
+此图仅为页面装饰，不是具体铁路线路、列车车型或运营信息的证据。

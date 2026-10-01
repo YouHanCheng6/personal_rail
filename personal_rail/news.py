@@ -49,3 +49,70 @@ def parse_announcements(html, source_url, publisher, today):
     return sorted(
         items.values(), key=lambda x: (x["published"], x["url"]), reverse=True
     )[:8]
+
+
+CATEGORY_FEEDS = {
+    "rail": FEEDS,
+    "flight": [("中国民航局", "https://www.caac.gov.cn/XWZX/MHYW/")],
+    "coach": [("交通运输部", "https://www.mot.gov.cn/")],
+}
+
+
+def parse_category(html, url, publisher, today, category):
+    if category == "rail":
+        return [
+            {**item, "category": category}
+            for item in parse_announcements(html, url, publisher, today)
+        ]
+    hosts = {
+        "flight": {"www.caac.gov.cn"},
+        "coach": {"www.mot.gov.cn", "xxgk.mot.gov.cn"},
+    }[category]
+    keywords = (
+        r"航班|机场|旅客|运输保障|行李|退票|退改"
+        if category == "flight"
+        else r"公路|道路客运|道路运输|班线|汽车客运|客运班车|客运站|客车|收费站|自驾"
+    )
+    soup = BeautifulSoup(html, "html.parser")
+    rows = soup.select("li")
+    dated_rows = 0
+    items = {}
+    for row in rows:
+        stamp = row.select_one(".n_date, .date")
+        anchor = row.find("a", href=True)
+        match = re.search(r"\d{4}-\d{2}-\d{2}", stamp.get_text()) if stamp else None
+        if not match or not anchor:
+            continue
+        dated_rows += 1
+        try:
+            published = date.fromisoformat(match[0])
+        except ValueError:
+            continue
+        target = urljoin(url, anchor["href"])
+        parts = urlsplit(target)
+        if (
+            parts.hostname not in hosts
+            or parts.scheme not in {"http", "https"}
+            or parts.username
+            or parts.query
+        ):
+            continue
+        target = parts._replace(scheme="https").geturl()
+        title = anchor.get("title") or anchor.get_text(" ", strip=True)
+        if (
+            0 <= (today - published).days <= 60
+            and re.search(keywords, title)
+            and not re.search(
+                r"会见|慰问|固定资产|运输量|客运量|决算|达标车型|技术规范", title
+            )
+        ):
+            items[target] = {
+                "title": title[:220],
+                "url": target,
+                "published": published.isoformat(),
+                "publisher": publisher,
+                "category": category,
+            }
+    if not dated_rows:
+        raise ValueError("公告栏目结构不可识别")
+    return sorted(items.values(), key=lambda x: x["published"], reverse=True)[:8]

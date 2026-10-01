@@ -1,31 +1,29 @@
-from __future__ import annotations
+"""Loopback-only transport information API. No model or planning runtime."""
 
 import asyncio
-import time
-import uuid
-from datetime import date, datetime, timedelta
+import json
+from contextlib import suppress
+from datetime import datetime, timedelta
 from typing import Literal
 
+import httpx
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from .planner import ROUTES, plan
-from .service import ROOT, TZ, Collector, MODEL_NAME, REFERENCES, analyze, now
+from .lookup import SearchQuery, lookup
+from .places import Places, MapUnavailable
+from .planner import ROUTES
+from .service import ROOT, TZ, Collector
 
-app = FastAPI(
-    title="沿线 · 个人铁路 Agent", docs_url=None, redoc_url=None, openapi_url=None
-)
+app = FastAPI(title="沿线 · 交通查询", docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(
     TrustedHostMiddleware,
     allowed_hosts=["127.0.0.1", "localhost", "[::1]", "testserver"],
 )
 collector = Collector()
-results = {}
-analysis_locks = {}
-rate = []
+slots = asyncio.Semaphore(2)
 
 
 @app.middleware("http")
@@ -47,23 +45,6 @@ async def local_boundary(request: Request, call_next):
     return response
 
 
-class Query(BaseModel):
-    route: Literal[
-        "longchuan-beijing",
-        "beijing-longchuan",
-        "beijing-ganzhou",
-        "ganzhou-beijing",
-        "jieyangjichang-longchuan",
-        "longchuan-jieyangjichang",
-    ]
-    departure_date: date
-    preference: Literal["balanced", "fastest", "cheapest", "comfortable"] = "balanced"
-    seat: Literal["balanced", "economy", "comfort"] = "balanced"
-    min_transfer: int = Field(default=45, ge=20, le=180)
-    same_station: bool = True
-    budget: float | None = Field(default=None, gt=0, le=20000, allow_inf_nan=False)
-
-
 @app.get("/")
 async def index():
     return FileResponse(ROOT / "static" / "index.html")
@@ -71,117 +52,100 @@ async def index():
 
 @app.get("/api/meta")
 async def meta():
-    today = datetime.now(TZ).date()
     return {
-        "routes": [
-            {"id": k, "origin": v[0], "destination": v[1]} for k, v in ROUTES.items()
-        ],
-        "today": today.isoformat(),
-        "default_date": (today + timedelta(days=1)).isoformat(),
-        "presale_last_date": (today + timedelta(days=14)).isoformat(),
-        "model": MODEL_NAME,
-        "references": [
-            {k: v for k, v in r.items() if k != "marker"} for r in REFERENCES
-        ],
+        "default_date": str(datetime.now(TZ).date() + timedelta(days=1)),
+        "agent_enabled": False,
+        "routes": [{"origin": a, "destination": b} for a, b in ROUTES.values()],
     }
 
 
-@app.post("/api/plan")
-async def create_plan(query: Query):
+@app.post("/api/search")
+async def search(query: SearchQuery, stream: bool = False):
     today = datetime.now(TZ).date()
     if not today <= query.departure_date <= today + timedelta(days=365):
         raise HTTPException(422, "请选择今天起一年内的日期。")
-    stamp = time.monotonic()
-    rate[:] = [t for t in rate if stamp - t < 60]
-    if len(rate) >= 10:
-        raise HTTPException(429, "查询过于频繁，请一分钟后重试。")
-    rate.append(stamp)
-    snapshots, sources = await collector.collect(query.route, query.departure_date)
-    candidates = plan(
-        snapshots,
-        query.route,
-        query.departure_date,
-        query.seat,
-        query.min_transfer,
-        query.same_station,
-        query.preference,
-        query.budget,
-    )
-    candidates = [candidate for candidate in candidates if candidate["date_matches"]]
-    # For a same-day search, never recommend a train that already departed.
-    if query.departure_date == today:
-        current = datetime.now(TZ).replace(tzinfo=None)
-        candidates = [
-            candidate
-            for candidate in candidates
-            if not candidate["date_matches"]
-            or datetime.fromisoformat(candidate["legs"][0]["departure"]) > current
-        ]
-    token = uuid.uuid4().hex
-    data = {
-        "id": token,
-        "created_at": now(),
-        "query": query.model_dump(mode="json"),
-        "candidates": candidates,
-        "data_status": "available"
-        if candidates
-        else (
-            "outside_presale"
-            if (query.departure_date - today).days >= 15
-            else ("no_matching_options" if snapshots else "source_unavailable")
-        ),
-        "sale_date": (query.departure_date - timedelta(days=14)).isoformat(),
-        "sources": sources,
-        "presale_open": (query.departure_date - today).days < 15,
-        "occupancy": "未知：未取得真实上座率，余票不等于车内人数。",
-        "scope": "仅含公开来源覆盖的直达及一次换乘方案；不保证穷尽。全程为站到站，铁路票价为成人参考价，未含市内交通、餐饮、住宿及服务费。",
-        "model": MODEL_NAME,
-        "references": [
-            {k: v for k, v in r.items() if k != "marker"} for r in REFERENCES
-        ],
-        "analysis": None,
-    }
-    for key in list(results):
-        if stamp - results[key][0] > 3600:
-            results.pop(key, None)
-            analysis_locks.pop(key, None)
-    if len(results) >= 30:
-        oldest = next(iter(results))
-        results.pop(oldest)
-        analysis_locks.pop(oldest, None)
-    results[token] = (stamp, data)
-    return data
+    if slots.locked():
+        raise HTTPException(429, "已有两个查询正在执行，请先取消或等待完成。")
 
+    async def execute(report=None):
+        async with slots:
+            return await lookup(query, collector, progress=report)
 
-@app.post("/api/analyze/{plan_id}")
-async def agent_analysis(plan_id: str):
-    if plan_id not in results:
-        raise HTTPException(404, "行程已过期，请重新查询。")
-    lock = analysis_locks.setdefault(plan_id, asyncio.Lock())
-    async with lock:
-        data = results[plan_id][1]
-        if data["analysis"] is None:
-            data["analysis"] = await analyze(
-                data["candidates"], data["query"]["preference"]
+    if not stream:
+        try:
+            return await execute()
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+
+    async def events():
+        queue = asyncio.Queue(maxsize=1)
+
+        def report(value):
+            if queue.full():
+                queue.get_nowait()
+            queue.put_nowait(value)
+
+        task = asyncio.create_task(execute(report))
+        try:
+            while not task.done():
+                waiter = asyncio.create_task(queue.get())
+                try:
+                    done, _ = await asyncio.wait(
+                        {task, waiter}, timeout=10, return_when=asyncio.FIRST_COMPLETED
+                    )
+                    if waiter in done:
+                        yield (
+                            "event: progress\ndata: "
+                            + json.dumps(waiter.result(), ensure_ascii=False)
+                            + "\n\n"
+                        )
+                    elif task not in done:
+                        yield ": heartbeat\n\n"
+                finally:
+                    if not waiter.done():
+                        waiter.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await waiter
+            yield (
+                "event: result\ndata: "
+                + json.dumps(await task, ensure_ascii=False)
+                + "\n\n"
             )
-        return data["analysis"]
+        except Exception as exc:
+            message = (
+                str(exc)
+                if isinstance(exc, ValueError)
+                else "查询未完成，请重试；已显示资料保留。"
+            )
+            yield (
+                "event: error\ndata: "
+                + json.dumps({"message": message}, ensure_ascii=False)
+                + "\n\n"
+            )
+        finally:
+            if not task.done():
+                task.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await task
+
+    return StreamingResponse(
+        events(), media_type="text/event-stream", headers={"X-Accel-Buffering": "no"}
+    )
 
 
-@app.get("/api/history/{route}")
-async def history(route: str):
-    if route not in ROUTES:
-        raise HTTPException(404, "不支持该方向。")
-    return {"items": collector.history(route)}
-
-
-@app.get("/api/references")
-async def references():
-    return {"items": await collector.references()}
-
-
-app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
+@app.get("/api/places")
+async def places(q: str):
+    if not 1 <= len(q.strip()) <= 100:
+        raise HTTPException(422, "地点名称应为1–100个字符")
+    try:
+        return {"items": await Places().search(q)}
+    except (MapUnavailable, httpx.HTTPError, ValueError):
+        return {"items": [], "message": "地点搜索暂不可用，请使用城市或车站名称。"}
 
 
 @app.get("/api/news")
-async def official_news():
-    return await collector.news()
+async def news(category: Literal["rail", "flight", "coach"] = "rail"):
+    return await collector.news(category)
+
+
+app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
